@@ -112,7 +112,6 @@ class ProjectCardFrame(ctk.CTkFrame):
         )
         open_btn.grid(row=0, column=1, padx=15, pady=10, sticky="e")
 
-
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -122,9 +121,6 @@ class App(ctk.CTk):
 
         self.titleText = ctk.CTkLabel(self, text="SocialVR Toolkit", font=("Arial", 30))
         self.titleText.pack(pady=10)
-
-        self.statusText = ctk.CTkLabel(self, text="", font=("Arial", 25))
-        self.statusText.pack(pady=1)
 
         # Loading config
         self.user_config = {}
@@ -385,25 +381,35 @@ class App(ctk.CTk):
     def checkVersionsApply(self):
         try:
             response = requests.get(versionsFile_online)
+            response.encoding = 'utf-8-sig'
 
             response.raise_for_status()
 
             # 4. Access the plain text content
-            file_text = response.text
-            print(file_text)
+            onlineVersionData = response.json()
+            print(onlineVersionData)
 
-            onlineVersionData = json.loads(file_text)
             localVersionData = {}
-            with open(localVersionData, "r") as f:
+            with open(versions_file, "r") as f:
                 localVersionData = json.load(f)
+
+            updated = False
 
             if onlineVersionData["SDK"] != localVersionData["SDK"]:
                 self.after(0, self.update_status, "Updating SocialSDK Unitypackage", "yellow")
                 downloadFile(socialSDK_Url, socialSDK_UnityPackage)
+                localVersionData["SDK"] = onlineVersionData["SDK"]
+                updated = True
 
             if onlineVersionData["World Template"] != localVersionData["World Template"]:
                 self.after(0, self.update_status, "Updating Social World Template", "yellow")
                 downloadFile(worldTemplate_Url, socialWorld_TempZip)
+                localVersionData["World Template"] = onlineVersionData["World Template"]
+                updated = True
+
+            if updated:
+                with open(versions_file, "w") as f:
+                    json.dump(localVersionData, f, indent=4)
 
             self.after(0, self.on_process_complete, True)
         except requests.exceptions.HTTPError as err:

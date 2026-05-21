@@ -1,8 +1,8 @@
-import threading
-
 from customtkinter import filedialog
 import customtkinter as ctk
 import subprocess
+import threading
+import requests
 import zipfile
 import shutil
 import json
@@ -32,6 +32,11 @@ configFile = os.path.join(configBase, "config.json")
 
 socialWorld_TempZip = os.path.join(EXE_DIR, "Templates", "SocialVR World.zip")
 socialSDK_UnityPackage = os.path.join(EXE_DIR, "Data", "SocialSDK-v1.4.unitypackage")
+
+
+socialSDK_Url = "https://github.com/ChristianHiland/Social-Toolkit/raw/refs/heads/master/Data/SocialSDK-v1.4.unitypackage"
+worldTemplate_Url = "https://github.com/ChristianHiland/Social-Toolkit/raw/refs/heads/master/Templates/SocialVR%20World.zip"
+versionsFile_online = "https://raw.githubusercontent.com/ChristianHiland/Social-Toolkit/refs/heads/master/Data/Versions.json"
 versions_file = os.path.join(EXE_DIR, "Data", "Versions.json")
 
 
@@ -62,6 +67,19 @@ def copy_and_unpack_zip(source_zip: str, target_folder: str):
         print(f"An error occurred during processing: {e}")
         return False
 
+def downloadFile(url: str, target: str) -> bool:
+    try:
+        with requests.get(url, stream=True) as response:
+            response.raise_for_status()
+
+            with open(target, "wb") as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        file.write(chunk)
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"Download Failed: {e}")
+        return False
 
 # Project Element
 class ProjectCardFrame(ctk.CTkFrame):
@@ -102,9 +120,17 @@ class App(ctk.CTk):
         self.title("Social Toolkit")
         self.geometry("1000x600")
 
+        self.titleText = ctk.CTkLabel(self, text="SocialVR Toolkit", font=("Arial", 30))
+        self.titleText.pack(pady=10)
+
+        self.statusText = ctk.CTkLabel(self, text="", font=("Arial", 25))
+        self.statusText.pack(pady=1)
+
         # Loading config
         self.user_config = {}
         self.check_first_time_setup()
+
+        self.start_async_update()
 
     def check_first_time_setup(self):
         if os.path.exists(configFile):
@@ -119,9 +145,6 @@ class App(ctk.CTk):
             self.initialize_setup_interface()
 
     def initialize_main_interface(self):
-        self.titleText = ctk.CTkLabel(self, text="SocialVR Toolkit", font=("Arial", 30))
-        self.titleText.pack(pady=10)
-
         # Project Creation Frame
 
         self.actionFrame = ctk.CTkFrame(self)
@@ -170,6 +193,10 @@ class App(ctk.CTk):
         self.project_cards = []
 
         self.load_projects()
+
+    #
+    # Project Functions
+    #
 
     def load_projects(self):
         for card in self.project_cards:
@@ -295,12 +322,16 @@ class App(ctk.CTk):
         except Exception as e:
             print(f"Failed to save configuration settings: {e}")
 
+    #
+    # Threading for Unity project setup
+    #
+
+
     def update_status(self, text, color="white"):
         """Safely update the UI status text from the main thread loop."""
         self.statusText.configure(text=text, text_color=color)
 
     def start_async_process(self):
-        """Triggers the background thread so the GUI doesn't lock up."""
         # Disable the button so the user doesn't accidentally click it twice
         self.createProjectBtn.configure(state="disabled")
         self.update_status("Starting background process...", "yellow")
@@ -308,6 +339,16 @@ class App(ctk.CTk):
         # Spin up the background worker thread
         # daemon=True ensures the thread dies automatically if the user closes the GUI app
         worker_thread = threading.Thread(target=self.background_worker, daemon=True)
+        worker_thread.start()
+
+    def start_async_update(self):
+        # Disable the button so the user doesn't accidentally click it twice
+        self.createProjectBtn.configure(state="disabled")
+        self.update_status("Checking for updates", "yellow")
+
+        # Spin up the background worker thread
+        # daemon=True ensures the thread dies automatically if the user closes the GUI app
+        worker_thread = threading.Thread(target=self.checkVersionsApply, daemon=True)
         worker_thread.start()
 
     def background_worker(self):
@@ -337,9 +378,40 @@ class App(ctk.CTk):
         """Runs back on the main thread once the background worker finishes."""
         self.createProjectBtn.configure(state="normal")
         if success:
-            self.update_status("Success! Project built and SDK imported.", "green")
+            self.update_status("Success!", "green")
         else:
-            self.update_status("Error occurred during setup.", "red")
+            self.update_status("Error occurred...", "red")
+
+    def checkVersionsApply(self):
+        try:
+            response = requests.get(versionsFile_online)
+
+            response.raise_for_status()
+
+            # 4. Access the plain text content
+            file_text = response.text
+            print(file_text)
+
+            onlineVersionData = json.loads(file_text)
+            localVersionData = {}
+            with open(localVersionData, "r") as f:
+                localVersionData = json.load(f)
+
+            if onlineVersionData["SDK"] != localVersionData["SDK"]:
+                self.after(0, self.update_status, "Updating SocialSDK Unitypackage", "yellow")
+                downloadFile(socialSDK_Url, socialSDK_UnityPackage)
+
+            if onlineVersionData["World Template"] != localVersionData["World Template"]:
+                self.after(0, self.update_status, "Updating Social World Template", "yellow")
+                downloadFile(worldTemplate_Url, socialWorld_TempZip)
+
+            self.after(0, self.on_process_complete, True)
+        except requests.exceptions.HTTPError as err:
+            print(f"HTTP error occurred: {err}")
+            self.after(0, self.on_process_complete, False)
+        except Exception as err:
+            print(f"An error occurred: {err}")
+            self.after(0, self.on_process_complete, False)
 
 app = App()
 app.mainloop()
